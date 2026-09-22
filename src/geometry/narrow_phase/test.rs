@@ -290,3 +290,43 @@ pub fn collider_set_parent_no_self_intersection() {
         "There should be a contact manifold."
     );
 }
+
+/// Balls resting on a voxels shape. parry's voxels–ball contact generator
+/// emits one manifold per touched voxel without a persistent workspace, so
+/// the pair's manifold ordinals change from step to step. Before voxels
+/// pairs were treated as composite, the incremental solver-contact graph
+/// kept stale ordinals: a debug build tripped "solver contact graph size !=
+/// selection size", and every build panicked with "stale ContactRef
+/// manifold ordinal" within a few hundred steps.
+#[test]
+pub fn balls_resting_on_voxels_keep_the_solver_graph_consistent() {
+    use crate::math::IVector;
+    use crate::pipeline::PhysicsWorld;
+
+    let mut world = PhysicsWorld::new();
+    world.integration_parameters.dt = 1.0 / 72.0;
+    // A 6 m square of 0.1 m voxels, uneven by up to two cells.
+    let mut cells = Vec::new();
+    for x in 0..60 {
+        for z in 0..60 {
+            for y in -3..=((x * 7 + z * 13) % 5) / 2 {
+                cells.push(IVector::new(x, y, z));
+            }
+        }
+    }
+    world.insert_collider(ColliderBuilder::voxels(Vector::splat(0.1), &cells).build(), None);
+    for i in 0..20 {
+        let (a, b) = ((i * 37 % 50) as f32 * 0.1, (i * 53 % 50) as f32 * 0.1);
+        world.insert(
+            RigidBodyBuilder::dynamic().translation(Vector::new(0.5 + a, 0.6, 0.5 + b)),
+            ColliderBuilder::ball(0.12),
+        );
+    }
+    for _ in 0..600 {
+        world.step();
+    }
+    // Every ball came to rest on the voxels rather than falling through.
+    for (_, body) in world.rigid_bodies() {
+        assert!(body.translation().y > 0.0, "a ball fell through the voxels");
+    }
+}

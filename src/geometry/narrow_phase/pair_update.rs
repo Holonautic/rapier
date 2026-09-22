@@ -794,7 +794,12 @@ pub(super) fn process_pair(
     // Composite pairs have unstable manifold ordinals (see `OUTCOME_FULL_COMPOSITE`),
     // so signal a full rebuild. Must be checked before the `FULL_CLEAN` shortcut: a
     // surviving manifold can look "clean" while a dropped sibling leaked its graph slot.
-    if outcome == OUTCOME_FULL && pair.rigid().is_some_and(|r| r.workspace.is_some()) {
+    // parry's voxels–ball generator rebuilds one manifold per touched voxel
+    // without a persistent workspace, so the workspace test alone misses it:
+    // treat any pair involving a voxels shape as composite too.
+    let voxels = co1.shape.shape_type() == crate::geometry::ShapeType::Voxels
+        || co2.shape.shape_type() == crate::geometry::ShapeType::Voxels;
+    if outcome == OUTCOME_FULL && (voxels || pair.rigid().is_some_and(|r| r.workspace.is_some())) {
         return OUTCOME_FULL_COMPOSITE;
     }
     if outcome == OUTCOME_FULL && !membership_changed {
