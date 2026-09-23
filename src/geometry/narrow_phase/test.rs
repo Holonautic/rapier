@@ -314,7 +314,10 @@ pub fn balls_resting_on_voxels_keep_the_solver_graph_consistent() {
             }
         }
     }
-    world.insert_collider(ColliderBuilder::voxels(Vector::splat(0.1), &cells).build(), None);
+    world.insert_collider(
+        ColliderBuilder::voxels(Vector::splat(0.1), &cells).build(),
+        None,
+    );
     for i in 0..20 {
         let (a, b) = ((i * 37 % 50) as f32 * 0.1, (i * 53 % 50) as f32 * 0.1);
         world.insert(
