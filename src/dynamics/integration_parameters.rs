@@ -291,6 +291,14 @@ pub struct IntegrationParameters {
     /// Also the global CCD on/off switch: `0` disables **all** CCD for the world (including the
     /// automatic CCD of fast dynamic bodies vs fixed colliders).
     pub max_ccd_substeps: usize,
+    /// Only bodies that ask for CCD get it (default: `false`).
+    ///
+    /// By default every fast dynamic body is swept against the fixed colliders, whatever its
+    /// [`RigidBody::is_ccd_enabled`](crate::dynamics::RigidBody::is_ccd_enabled). With this set,
+    /// only bodies with CCD enabled are swept (against every body, as CCD-enabled bodies are).
+    /// For worlds of many small, fast colliders over composite shapes (voxels, meshes), where
+    /// the automatic sweeps cost more than the rest of the step and predictive contacts suffice.
+    pub ccd_opt_in: bool,
     /// If enabled, contact manifolds of a collider pair sharing (nearly) the same normal are merged
     /// into one "cluster" manifold before constraint generation (default: `true`, 3D only), so at
     /// most 4 contact points are solved per contact plane — a large solver win on composite shapes
@@ -417,6 +425,7 @@ impl Default for IntegrationParameters {
             normalized_prediction_distance: 0.02,
             normalized_max_linear_velocity: 400.0,
             max_ccd_substeps: 1,
+            ccd_opt_in: false,
             contact_clustering: true,
             contact_recycling: true,
             normalized_contact_recycle_distance: 0.05,

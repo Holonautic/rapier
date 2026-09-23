@@ -738,3 +738,42 @@ fn contact_force_events_follow_runtime_active_events_flips() {
     }
     assert_eq!(events.0.load(Ordering::Relaxed), after_enable);
 }
+
+#[test]
+fn ccd_opt_in_sweeps_only_bodies_that_ask_for_it() {
+    use crate::pipeline::PhysicsWorld;
+    // A thin wall, and a small ball shot at it fast enough to cross it in one step.
+    let shoot = |opt_in: bool, ccd_enabled: bool| {
+        let mut world = PhysicsWorld::new();
+        world.gravity = Vector::ZERO;
+        world.integration_parameters.ccd_opt_in = opt_in;
+        world.insert_collider(
+            ColliderBuilder::cuboid(0.01, 2.0, 2.0)
+                .translation(Vector::new(1.0, 0.0, 0.0))
+                .build(),
+            None,
+        );
+        let (ball, _) = world.insert(
+            RigidBodyBuilder::dynamic()
+                .linvel(Vector::new(200.0, 0.0, 0.0))
+                .ccd_enabled(ccd_enabled),
+            ColliderBuilder::ball(0.05),
+        );
+        for _ in 0..5 {
+            world.step();
+        }
+        world.bodies[ball].translation().x
+    };
+    assert!(
+        shoot(false, false) < 1.0,
+        "fast bodies are swept by default"
+    );
+    assert!(
+        shoot(true, false) > 1.0,
+        "with opt-in, a body that did not ask is not swept"
+    );
+    assert!(
+        shoot(true, true) < 1.0,
+        "with opt-in, a body that asked is swept"
+    );
+}

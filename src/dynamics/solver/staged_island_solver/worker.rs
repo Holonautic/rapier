@@ -995,13 +995,14 @@ pub(super) unsafe fn run_worker(ctx: &SharedCtx, worker_id: usize) {
                     // Fused post-solve CCD activation (fast-body criterion on the
                     // solved motion): replaces the pipeline's serial post-solve
                     // walk over every active body when no multibody is present.
-                    let moving_fast = rb.ccd.is_moving_fast_with_next_position(
-                        base_params.dt,
-                        &rb.ccd_vels,
-                        &rb.pos,
-                        rb.mprops.local_mprops.local_com,
-                        rb.mprops.max_extent(),
-                    );
+                    let moving_fast = (!base_params.ccd_opt_in || rb.ccd.ccd_enabled)
+                        && rb.ccd.is_moving_fast_with_next_position(
+                            base_params.dt,
+                            &rb.ccd_vels,
+                            &rb.pos,
+                            rb.mprops.local_mprops.local_com,
+                            rb.mprops.max_extent(),
+                        );
                     rb.ccd.ccd_active = moving_fast;
                     if moving_fast {
                         // SAFETY: shared atomic; claimed slots make the flag

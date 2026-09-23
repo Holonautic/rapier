@@ -58,6 +58,7 @@ impl CCDSolver {
         bodies: &mut RigidBodySet,
         dt: Real,
         include_forces: bool,
+        opt_in: bool,
     ) -> bool {
         let mut ccd_active = false;
 
@@ -66,8 +67,11 @@ impl CCDSolver {
 
             // Default tier: every fast dynamic body is a CCD origin. `ccd_enabled`
             // no longer gates *activation*, only the sweep *scope* (fixed-only vs all bodies),
-            // applied later during pair selection.
-            if rb.is_dynamic() {
+            // applied later during pair selection — unless the world opted in to CCD per body
+            // (`IntegrationParameters::ccd_opt_in`).
+            if opt_in && !rb.ccd.ccd_enabled {
+                rb.ccd.ccd_active = false;
+            } else if rb.is_dynamic() {
                 let moving_fast = if include_forces {
                     // Pre-solve (substep splitter): `next_position` isn't solved yet, use
                     // the velocity-based estimate including forces.

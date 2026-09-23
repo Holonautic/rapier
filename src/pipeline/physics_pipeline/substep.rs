@@ -450,8 +450,13 @@ impl PhysicsPipeline {
             if ccd_is_enabled && remaining_substeps > 1 {
                 // NOTE: Take forces into account when updating the bodies CCD activation flags
                 //       these forces have not been integrated to the body's velocity yet.
-                let ccd_active =
-                    ccd_solver.update_ccd_active_flags(islands, bodies, remaining_time, true);
+                let ccd_active = ccd_solver.update_ccd_active_flags(
+                    islands,
+                    bodies,
+                    remaining_time,
+                    true,
+                    integration_parameters.ccd_opt_in,
+                );
                 self.join_deferred_bvh_optimize(broad_phase);
                 let first_impact = if ccd_active {
                     ccd_solver.find_first_impact(
@@ -528,6 +533,7 @@ impl PhysicsPipeline {
                         bodies,
                         integration_parameters.dt,
                         false,
+                        integration_parameters.ccd_opt_in,
                     ),
                 };
                 if ccd_active {
