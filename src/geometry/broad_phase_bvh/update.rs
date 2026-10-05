@@ -56,6 +56,33 @@ impl BroadPhaseBvh {
             self.tree.remove(handle.into_raw_parts().0);
         }
 
+        // Drop the removed colliders' pairs now, before anything is inserted: a collider
+        // added since the last update can reuse a removed one's arena index, and the first
+        // pair found for it resets that index's adjacency slot to its own generation. Done
+        // after the traversal, the removal then missed the slot, so the old pairs stayed in
+        // `pairs` and in their partners' adjacency for good, and the next removal of such a
+        // partner paid for all of them at once. No events: the narrow phase drops removed
+        // colliders' pairs on its own.
+        for handle in removed_colliders {
+            let Some(others) = self.pair_adjacency.remove(handle.0, Vec::new()) else {
+                continue;
+            };
+            for other in others {
+                let pair = if handle.into_raw_parts().0 > other.into_raw_parts().0 {
+                    (other, *handle)
+                } else {
+                    (*handle, other)
+                };
+                if crate::utils::hashmap_remove(&mut self.pairs, &pair).is_some() {
+                    if let Some(list) = self.pair_adjacency.get_mut(other.0) {
+                        if let Some(pos) = list.iter().position(|h| h == handle) {
+                            list.swap_remove(pos);
+                        }
+                    }
+                }
+            }
+        }
+
         let first_pass = self.tree.is_empty();
 
         self.updated_colliders.clear();
@@ -449,17 +476,6 @@ impl BroadPhaseBvh {
         // cannot do, and part of the serialized broad-phase state. One scan for every
         // build is both simpler and what the parallel build already did.)
         self.stale_pairs.clear();
-
-        // Pairs involving a removed collider are always dropped (without emitting an
-        // event, matching the behavior of the narrow-phase which handles removed
-        // colliders on its own).
-        for handle in removed_colliders {
-            if let Some(mut others) = self.pair_adjacency.remove(handle.0, Vec::new()) {
-                for other in others.drain(..) {
-                    self.stale_pairs.push((*handle, other, false));
-                }
-            }
-        }
 
         // Adjacency scan: pure read-only lookups, stale candidates flattened in `updated_colliders`
         // order (deterministic). No map probe: adjacency membership implies map membership, and the

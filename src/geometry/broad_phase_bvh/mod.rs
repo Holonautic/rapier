@@ -270,9 +270,10 @@ mod test {
     use crate::alloc_prelude::*;
     use crate::math::Vector;
     use crate::prelude::{
-        CCDSolver, ColliderBuilder, ColliderSet, DefaultBroadPhase, ImpulseJointSet,
-        IntegrationParameters, IslandManager, MultibodyJointSet, NarrowPhase, PhysicsPipeline,
-        RigidBodyBuilder, RigidBodySet, SoftBodySet,
+        ActiveCollisionTypes, CCDSolver, ColliderBuilder, ColliderHandle, ColliderSet,
+        DefaultBroadPhase, ImpulseJointSet, IntegrationParameters, IslandManager,
+        MultibodyJointSet, NarrowPhase, PhysicsPipeline, RigidBodyBuilder, RigidBodySet,
+        SoftBodySet,
     };
 
     /// With the adaptive change-detection margin enabled, collisions must still be
@@ -328,6 +329,90 @@ mod test {
                 (y - 1.0).abs() < 0.02,
                 "ball did not rest on the floor: y = {y}"
             );
+        }
+    }
+
+    /// A body whose colliders are removed and re-added every step (a hand's shape
+    /// rebuilt as its fingers move) gets its old arena indices back, generation bumped.
+    /// The removed colliders' pairs must still be dropped: the pair map and each
+    /// partner's adjacency stay bounded by what actually overlaps, step after step.
+    #[test]
+    fn colliders_replaced_every_step_leave_no_pairs_behind() {
+        let mut bodies = RigidBodySet::new();
+        let mut colliders = ColliderSet::new();
+        let mut impulse_joints = ImpulseJointSet::new();
+        let mut multibody_joints = MultibodyJointSet::new();
+        let mut soft_bodies = SoftBodySet::new();
+        let mut pipeline = PhysicsPipeline::new();
+        let mut islands = IslandManager::new();
+        let mut broad_phase = DefaultBroadPhase::new();
+        let mut narrow_phase = NarrowPhase::new();
+        let mut ccd = CCDSolver::new();
+
+        const FLOOR: usize = 20;
+        const PARTS: usize = 4;
+        let floor: Vec<ColliderHandle> = (0..FLOOR)
+            .map(|i| {
+                colliders.insert(
+                    ColliderBuilder::cuboid(0.5, 0.5, 0.5).translation(Vector::new(
+                        i as f32 * 0.2,
+                        0.0,
+                        0.0,
+                    )),
+                )
+            })
+            .collect();
+        let hand = bodies.insert(RigidBodyBuilder::kinematic_position_based());
+        let mut parts: Vec<ColliderHandle> = Vec::new();
+
+        let params = IntegrationParameters::default();
+        for step in 0..60 {
+            for part in parts.drain(..) {
+                colliders.remove(part, &mut islands, &mut bodies, &mut soft_bodies, false);
+            }
+            for k in 0..PARTS {
+                parts.push(
+                    colliders.insert_with_parent(
+                        ColliderBuilder::ball(1.0)
+                            .translation(Vector::new(k as f32 * 0.5, 0.5, 0.0))
+                            .active_collision_types(ActiveCollisionTypes::all()),
+                        hand,
+                        &mut bodies,
+                    ),
+                );
+            }
+            pipeline.step(
+                Vector::ZERO,
+                &params,
+                &mut islands,
+                &mut broad_phase,
+                &mut narrow_phase,
+                &mut bodies,
+                &mut colliders,
+                &mut impulse_joints,
+                &mut multibody_joints,
+                &mut soft_bodies,
+                &mut ccd,
+                &(),
+                &(),
+            );
+
+            // Only part-floor pairs can exist (fixed-fixed ones are filtered).
+            assert!(
+                broad_phase.pairs.len() <= PARTS * FLOOR,
+                "step {step}: {} pairs",
+                broad_phase.pairs.len()
+            );
+            for block in &floor {
+                let partners = broad_phase
+                    .pair_adjacency
+                    .get(block.0)
+                    .map_or(0, |p| p.len());
+                assert!(
+                    partners <= PARTS,
+                    "step {step}: a floor block has {partners} partners"
+                );
+            }
         }
     }
 }
