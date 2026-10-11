@@ -740,6 +740,7 @@ fn contact_force_events_follow_runtime_active_events_flips() {
 }
 
 #[test]
+#[cfg(feature = "dim3")]
 fn ccd_opt_in_sweeps_only_bodies_that_ask_for_it() {
     use crate::pipeline::PhysicsWorld;
     // A thin wall, and a small ball shot at it fast enough to cross it in one step.
