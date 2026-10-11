@@ -68,18 +68,7 @@ impl BroadPhaseBvh {
                 continue;
             };
             for other in others {
-                let pair = if handle.into_raw_parts().0 > other.into_raw_parts().0 {
-                    (other, *handle)
-                } else {
-                    (*handle, other)
-                };
-                if crate::utils::hashmap_remove(&mut self.pairs, &pair).is_some() {
-                    if let Some(list) = self.pair_adjacency.get_mut(other.0) {
-                        if let Some(pos) = list.iter().position(|h| h == handle) {
-                            list.swap_remove(pos);
-                        }
-                    }
-                }
+                self.remove_pair(*handle, other);
             }
         }
 
@@ -596,27 +585,37 @@ impl BroadPhaseBvh {
 
         for i in 0..self.stale_pairs.len() {
             let (h0, h1, emit_event) = self.stale_pairs[i];
-            let (h0, h1) = if h0.into_raw_parts().0 > h1.into_raw_parts().0 {
-                (h1, h0)
-            } else {
-                (h0, h1)
-            };
-
             // The `remove` check also deduplicates: the same pair can be pushed twice
             // if both its colliders changed this frame.
-            if crate::utils::hashmap_remove(&mut self.pairs, &(h0, h1)).is_some() {
-                for (ha, hb) in [(h0, h1), (h1, h0)] {
-                    if let Some(others) = self.pair_adjacency.get_mut(ha.0) {
-                        if let Some(pos) = others.iter().position(|h| *h == hb) {
-                            others.swap_remove(pos);
-                        }
-                    }
-                }
-
+            if let Some((h0, h1)) = self.remove_pair(h0, h1) {
                 if emit_event {
                     events.push(BroadPhasePairEvent::DeletePair(ColliderPair::new(h0, h1)));
                 }
             }
         }
+    }
+
+    /// Drops the pair of `h0` and `h1` from `pairs` and from both colliders'
+    /// adjacency. Returns the pair in its canonical order (lower arena index
+    /// first) when it was there.
+    fn remove_pair(
+        &mut self,
+        h0: ColliderHandle,
+        h1: ColliderHandle,
+    ) -> Option<(ColliderHandle, ColliderHandle)> {
+        let (h0, h1) = if h0.into_raw_parts().0 > h1.into_raw_parts().0 {
+            (h1, h0)
+        } else {
+            (h0, h1)
+        };
+        crate::utils::hashmap_remove(&mut self.pairs, &(h0, h1))?;
+        for (ha, hb) in [(h0, h1), (h1, h0)] {
+            if let Some(others) = self.pair_adjacency.get_mut(ha.0) {
+                if let Some(pos) = others.iter().position(|h| *h == hb) {
+                    others.swap_remove(pos);
+                }
+            }
+        }
+        Some((h0, h1))
     }
 }
