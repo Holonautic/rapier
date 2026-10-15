@@ -23,6 +23,10 @@ struct World {
 
 impl World {
     fn step(&mut self) {
+        self.step_with(&());
+    }
+
+    fn step_with(&mut self, hooks: &dyn PhysicsHooks) {
         self.pipeline.step(
             Vector::new(0.0, -9.81, 0.0),
             &self.params,
@@ -35,7 +39,7 @@ impl World {
             &mut self.multibody_joints,
             &mut self.soft_bodies,
             &mut self.ccd,
-            &(),
+            hooks,
             &(),
         );
     }
@@ -205,5 +209,42 @@ fn clustering_matches_unclustered_rest_behavior() {
     assert!(
         (pa - pb).length() < 1.0e-2,
         "clustered and unclustered rest positions diverged: {pa:?} vs {pb:?}"
+    );
+}
+
+/// Pairs whose filter hook returns `SolverFlags::UNCLUSTERED`.
+struct Unclustered;
+
+impl PhysicsHooks for Unclustered {
+    fn filter_contact_pair(&self, _context: &PairFilterContext) -> Option<SolverFlags> {
+        Some(SolverFlags::default() | SolverFlags::UNCLUSTERED)
+    }
+}
+
+#[test]
+fn an_unclustered_pair_reaches_the_solver_as_its_manifolds() {
+    let (mut world, box_body, box_co) = box_on_trimesh_floor(true);
+    world.colliders[box_co].set_active_hooks(ActiveHooks::FILTER_CONTACT_PAIRS);
+
+    for _ in 0..200 {
+        world.step_with(&Unclustered);
+    }
+
+    let rb = &world.bodies[box_body];
+    assert!(
+        rb.linvel().length() < 1.0e-2,
+        "box still moving at rest: |v| = {}",
+        rb.linvel().length()
+    );
+    let pair = world
+        .narrow_phase
+        .contact_pair(box_co, world.colliders.iter().next().unwrap().0)
+        .expect("no contact pair between the box and the floor");
+    assert!(pair.manifolds().len() > 1);
+    assert!(pair.rigid().unwrap().solver_clusters.is_empty());
+    assert!(
+        pair.manifolds()
+            .iter()
+            .any(|m| !m.data.solver_contacts.is_empty())
     );
 }

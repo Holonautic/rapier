@@ -466,7 +466,10 @@ pub(super) fn process_pair(
         // Soft-surface pairs keep one manifold per triangle: the soft-body solver needs each
         // point's triangle (the manifold's subshape id), which a cluster loses.
         #[cfg(feature = "dim3")]
-        let use_clusters = contact_clustering && rigid.manifolds.len() > 1 && !soft_surface_pair;
+        let use_clusters = contact_clustering
+            && rigid.manifolds.len() > 1
+            && !soft_surface_pair
+            && !solver_flags.contains(SolverFlags::UNCLUSTERED);
         #[cfg(not(feature = "dim3"))]
         let use_clusters = {
             // Contact clustering isn’t implemented in 2D (manifolds hold at

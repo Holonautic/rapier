@@ -22,6 +22,14 @@ bitflags::bitflags! {
         /// The constraint solver will take this contact manifold into
         /// account for force computation between two rigid colliders.
         const COMPUTE_RIGID_IMPULSES = 0b001;
+        /// The pair's manifolds reach the solver as they are, never merged into
+        /// clusters (see [`IntegrationParameters::contact_clustering`]): for a
+        /// pair whose clusters would pick their few solver points from many
+        /// nearly level ones, a choice that changes from step to step, loses
+        /// the warm-start and keeps a resting body rocking.
+        ///
+        /// [`IntegrationParameters::contact_clustering`]: crate::dynamics::IntegrationParameters::contact_clustering
+        const UNCLUSTERED = 0b010;
         // TODO: add a COMPUTE_SOFT_IMPULSES flag too?
     }
 }
