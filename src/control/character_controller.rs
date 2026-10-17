@@ -203,6 +203,13 @@ pub struct KinematicCharacterController {
     /// This value should remain fairly small since it can introduce artificial "bumps" when sliding
     /// along a flat surface.
     pub normal_nudge_factor: Real,
+    /// The most times one movement may hit something and slide on before it stops where it is.
+    ///
+    /// Every slide is shape-cast, so stopping sooner never lets the character through anything;
+    /// it only ends a movement that keeps meeting obstacles earlier. Each slide also re-checks the
+    /// ground against every nearby collider, which is what a character wedged among many
+    /// colliders pays for.
+    pub max_slide_iterations: usize,
 }
 
 impl Default for KinematicCharacterController {
@@ -216,6 +223,7 @@ impl Default for KinematicCharacterController {
             min_slope_slide_angle: Real::frac_pi_4(),
             snap_to_ground: Some(CharacterLength::Relative(0.2)),
             normal_nudge_factor: 1.0e-4,
+            max_slide_iterations: 20,
         }
     }
 }
@@ -335,7 +343,7 @@ impl KinematicCharacterController {
             None,
         );
 
-        let mut max_iters = 20;
+        let mut max_iters = self.max_slide_iterations;
         let mut kinematic_friction_translation = Vector::ZERO;
         let offset = self.offset.eval(dims.y);
         let mut is_moving = false;
