@@ -210,6 +210,13 @@ pub struct KinematicCharacterController {
     /// ground against every nearby collider, which is what a character wedged among many
     /// colliders pays for.
     pub max_slide_iterations: usize,
+    /// Reuse the contacts found at a pose when one movement checks the ground at that pose again.
+    ///
+    /// Nothing moves while a movement is computed, so the contacts at a pose are the same every
+    /// time; a slide that hits something at once leaves the character where it was, and a
+    /// character wedged among colliders re-checks the same pose on every slide. The result is the
+    /// same either way; off, every check finds its contacts afresh.
+    pub reuse_contacts: bool,
 }
 
 impl Default for KinematicCharacterController {
@@ -224,8 +231,17 @@ impl Default for KinematicCharacterController {
             snap_to_ground: Some(CharacterLength::Relative(0.2)),
             normal_nudge_factor: 1.0e-4,
             max_slide_iterations: 20,
+            reuse_contacts: true,
         }
     }
+}
+
+/// The contacts one movement found at its last ground check, by collider, in the order the query
+/// gave them ([`KinematicCharacterController::reuse_contacts`]).
+#[derive(Default)]
+struct ContactsAt {
+    at: Option<Pose>,
+    colliders: Vec<(ColliderHandle, Vec<ContactManifold>)>,
 }
 
 /// The effective movement computed by the character controller.
@@ -333,7 +349,9 @@ impl KinematicCharacterController {
 
         let mut translation_remaining = desired_translation;
 
+        let mut contacts = ContactsAt::default();
         let grounded_at_starting_pos = self.detect_grounded_status_and_apply_friction(
+                &mut contacts,
             dt,
             queries,
             character_shape,
@@ -410,6 +428,7 @@ impl KinematicCharacterController {
                 // No interference along the path.
                 result.translation += translation_remaining;
                 result.grounded = self.detect_grounded_status_and_apply_friction(
+                &mut contacts,
                     dt,
                     queries,
                     character_shape,
@@ -421,6 +440,7 @@ impl KinematicCharacterController {
                 break;
             }
             result.grounded = self.detect_grounded_status_and_apply_friction(
+                &mut contacts,
                 dt,
                 queries,
                 character_shape,
@@ -438,6 +458,7 @@ impl KinematicCharacterController {
         // so we call it explicitly here.
         if !is_moving {
             result.grounded = self.detect_grounded_status_and_apply_friction(
+                &mut contacts,
                 dt,
                 queries,
                 character_shape,
@@ -503,6 +524,7 @@ impl KinematicCharacterController {
     #[profiling::function]
     fn detect_grounded_status_and_apply_friction(
         &self,
+        contacts: &mut ContactsAt,
         dt: Real,
         queries: &QueryPipeline,
         character_shape: &dyn Shape,
@@ -523,17 +545,35 @@ impl KinematicCharacterController {
 
         let mut grounded = false;
 
-        'outer: for (_, collider) in queries.intersect_aabb_conservative(character_aabb) {
+        // At the pose of the last check, its contacts are this check's: nothing moves while a
+        // movement is computed (`reuse_contacts`).
+        let again = self.reuse_contacts && contacts.at == Some(*character_pos);
+        if !again {
+            contacts.at = Some(*character_pos);
+            contacts.colliders.clear();
+        }
+
+        'outer: for (index, (handle, collider)) in
+            queries.intersect_aabb_conservative(character_aabb).enumerate()
+        {
             manifolds.clear();
-            let pos12 = character_pos.inv_mul(collider.position());
-            let _ = dispatcher.contact_manifolds(
-                &pos12,
-                character_shape,
-                collider.shape(),
-                prediction,
-                &mut manifolds,
-                &mut None,
-            );
+            match contacts.colliders.get(index).filter(|(h, _)| again && *h == handle) {
+                Some((_, kept)) => manifolds.extend(kept.iter().cloned()),
+                None => {
+                    let pos12 = character_pos.inv_mul(collider.position());
+                    let _ = dispatcher.contact_manifolds(
+                        &pos12,
+                        character_shape,
+                        collider.shape(),
+                        prediction,
+                        &mut manifolds,
+                        &mut None,
+                    );
+                    if self.reuse_contacts && contacts.colliders.len() == index {
+                        contacts.colliders.push((handle, manifolds.clone()));
+                    }
+                }
+            }
 
             if let (Some(kinematic_friction_translation), Some(translation_remaining)) = (
                 kinematic_friction_translation.as_deref_mut(),
@@ -1319,6 +1359,77 @@ mod test {
             "actual translation.z:{}",
             translation.z
         );
+    }
+
+    /// A character pressed into a narrowing gap between two kinematic walls closing in, on a
+    /// fixed floor, moves exactly as far, ends exactly as grounded and slides exactly the same
+    /// with its contacts reused at a pose as with every check finding them afresh: wedged, nearly
+    /// every slide re-checks the pose it started from.
+    #[test]
+    fn reusing_contacts_at_a_pose_changes_no_movement() {
+        let mut colliders = ColliderSet::new();
+        let mut impulse_joints = ImpulseJointSet::new();
+        let mut multibody_joints = MultibodyJointSet::new();
+        let mut soft_bodies = SoftBodySet::new();
+        let mut pipeline = PhysicsPipeline::new();
+        let mut bf = BroadPhaseBvh::new();
+        let mut nf = NarrowPhase::new();
+        let mut islands = IslandManager::new();
+        let mut bodies = RigidBodySet::new();
+        let integration_parameters = IntegrationParameters::default();
+
+        let floor = bodies.insert(RigidBodyBuilder::fixed().translation(Vector::new(0.0, -0.5, 0.0)));
+        colliders.insert_with_parent(ColliderBuilder::cuboid(20.0, 0.5, 20.0), floor, &mut bodies);
+        // Two walls meeting ahead of the character, narrower than it at their point, closing in.
+        for side in [-1.0f32, 1.0] {
+            let turn = Rotation::from_rotation_y(side * 25f32.to_radians());
+            let wall = bodies.insert(
+                RigidBodyBuilder::kinematic_velocity_based()
+                    .translation(Vector::new(0.0, 1.0, -1.0) + turn * Vector::new(0.0, 0.0, 0.6))
+                    .rotation((turn.to_scaled_axis()).into())
+                    .linvel(Vector::new(-side * 0.05, 0.0, 0.05)),
+            );
+            colliders.insert_with_parent(ColliderBuilder::cuboid(0.04, 1.0, 0.6), wall, &mut bodies);
+        }
+        let mut character = RigidBodyBuilder::kinematic_position_based().build();
+        character.set_translation(Vector::new(0.0, 0.86, 0.5), false);
+        let character = bodies.insert(character);
+        let shape = SharedShape::cuboid(0.17, 0.85, 0.17);
+        colliders.insert_with_parent(ColliderBuilder::new(shape.clone()), character, &mut bodies);
+
+        let reused = KinematicCharacterController { max_slide_iterations: 8, ..Default::default() };
+        let afresh = KinematicCharacterController { reuse_contacts: false, ..reused };
+        for step in 0..240 {
+            pipeline.step(
+                Vector::Y * -9.81,
+                &integration_parameters,
+                &mut islands,
+                &mut bf,
+                &mut nf,
+                &mut bodies,
+                &mut colliders,
+                &mut impulse_joints,
+                &mut multibody_joints,
+                &mut soft_bodies,
+                &mut CCDSolver::new(),
+                &(),
+                &(),
+            );
+            let pos = *bodies.get(character).unwrap().position();
+            let queries = bf.as_query_pipeline(
+                nf.query_dispatcher(),
+                &bodies,
+                &colliders,
+                QueryFilter::new().exclude_rigid_body(character),
+            );
+            let wanted = Vector::new(0.03 * (step as f32 * 0.7).sin(), -0.02, -0.06);
+            let dt = integration_parameters.dt;
+            let a = reused.move_shape(dt, &queries, &*shape, &pos, wanted, |_| {});
+            let b = afresh.move_shape(dt, &queries, &*shape, &pos, wanted, |_| {});
+            assert_eq!(a.translation.to_array().map(f32::to_bits), b.translation.to_array().map(f32::to_bits), "step {step}");
+            assert_eq!((a.grounded, a.is_sliding_down_slope), (b.grounded, b.is_sliding_down_slope), "step {step}");
+            bodies.get_mut(character).unwrap().set_next_kinematic_translation(pos.translation + a.translation);
+        }
     }
 
     #[test]
