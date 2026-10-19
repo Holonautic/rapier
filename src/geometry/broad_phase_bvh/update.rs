@@ -43,21 +43,12 @@ impl BroadPhaseBvh {
     ) {
         self.frame_index = self.frame_index.overflowing_add(1).0;
 
-        // A fixed collider's leaf may change: the fixed world's queries start afresh.
-        let fixed_changed = !removed_colliders.is_empty()
-            || modified_colliders.iter().any(|handle| {
-                colliders.get(*handle).is_some_and(|co| {
-                    co.changes.intersects(
-                        ColliderChanges::PARENT
-                            | ColliderChanges::PARENT_EFFECTIVE_DOMINANCE
-                            | ColliderChanges::ENABLED_OR_DISABLED,
-                    ) || co
-                        .parent
-                        .is_none_or(|p| bodies.get(p.handle).is_none_or(|rb| rb.is_fixed()))
-                })
-            });
-        if fixed_changed {
-            self.fixed_revision = self.fixed_revision.wrapping_add(1);
+        // Whether the fixed world's leaves changed: one of its colliders left
+        // it, joined it or had its leaf moved (see `fixed_revision`). Removed
+        // colliders include disabled ones.
+        let mut fixed_changed = false;
+        for handle in removed_colliders {
+            fixed_changed |= self.set_fixed_leaf(handle.into_raw_parts().0, false);
         }
 
         // If the previous update requested a deferred optimization but nothing ran it
@@ -103,6 +94,8 @@ impl BroadPhaseBvh {
                 self.curr_updated_leaves.push(handle.into_raw_parts().0);
             }
         }
+
+        let updated_by_set_aabb = self.updated_colliders.len();
 
         // Colliders whose pair-filter inputs may have flipped (re-parent, parent type,
         // collision groups) get their leaf removed and re-inserted as brand-new, so the
@@ -281,6 +274,26 @@ impl BroadPhaseBvh {
         }
 
         self.update_workspace = update_workspace;
+
+        // A fixed collider is an enabled one with no moving body. One whose
+        // body's type, its own parent or its enabling changed is among
+        // `modified_colliders`, so its membership is settled here.
+        for handle in modified_colliders {
+            if let Some(co) = colliders.get(*handle) {
+                let fixed = co.is_enabled()
+                    && co
+                        .parent
+                        .is_none_or(|p| bodies.get(p.handle).is_none_or(|rb| rb.is_fixed()));
+                fixed_changed |= self.set_fixed_leaf(handle.into_raw_parts().0, fixed);
+            }
+        }
+        // The leaves this update moved (`set_aabb`'s counted when they were set).
+        fixed_changed |= self.updated_colliders[updated_by_set_aabb..]
+            .iter()
+            .any(|handle| self.is_fixed_leaf(handle.into_raw_parts().0));
+        if fixed_changed {
+            self.fixed_revision = self.fixed_revision.wrapping_add(1);
+        }
 
         // The incremental optimizer (and its O(tree) full refit) only runs when enough quality-degrading
         // changes accumulated: every frame under bulk volumes, every 8th for moderate, never for small

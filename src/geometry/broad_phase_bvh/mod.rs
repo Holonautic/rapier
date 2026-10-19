@@ -100,12 +100,16 @@ pub struct BroadPhaseBvh {
     /// solver; consumed by [`Self::take_deferred_optimize`].
     #[cfg_attr(feature = "serde-serialize", serde(skip))]
     deferred_optimize_pending: bool,
-    /// Bumped whenever a fixed collider's leaf may have changed: a fixed collider (no
-    /// parent, or a fixed parent) modified, any collider's parent, parent type or enabled
-    /// state changed, any collider removed, any `set_aabb`. A cache of the fixed colliders'
-    /// leaves (for queries of the fixed world only) holds while it is unchanged.
+    /// Bumped whenever the fixed colliders' leaves may have changed: a fixed collider
+    /// (enabled, with no parent or a fixed one) removed, disabled, made or unmade fixed,
+    /// or its leaf moved by an update, or any leaf moved by `set_aabb`. A cache of the
+    /// fixed colliders' leaves (for queries of the fixed world only) holds while it is
+    /// unchanged. Moving colliders put in, taken out or moved leave it as it is.
     #[cfg_attr(feature = "serde-serialize", serde(skip))]
     fixed_revision: u64,
+    /// Whether each leaf (by collider index) is a fixed collider's, as of
+    /// the last update: an enabled collider with no moving body.
+    fixed_leaves: Vec<bool>,
 }
 
 // TODO: would be interesting to try out:
@@ -252,8 +256,31 @@ impl BroadPhaseBvh {
     /// The change is immediately applied and propagated through the underlying BVH;
     /// change detection accounts for it during the next broad-phase update.
     pub fn set_aabb(&mut self, params: &IntegrationParameters, handle: ColliderHandle, aabb: Aabb) {
-        self.fixed_revision = self.fixed_revision.wrapping_add(1);
+        let pending = self.pending_set_aabb.len();
         self.set_moved_aabb(params, handle, aabb);
+        // Whichever collider's leaf moved: one no update has seen yet may be
+        // a fixed one.
+        if self.pending_set_aabb.len() > pending {
+            self.fixed_revision = self.fixed_revision.wrapping_add(1);
+        }
+    }
+
+    /// Whether the leaf of the collider at `index` is a fixed collider's.
+    fn is_fixed_leaf(&self, index: u32) -> bool {
+        self.fixed_leaves.get(index as usize).copied().unwrap_or(false)
+    }
+
+    /// Marks the leaf of the collider at `index` a fixed collider's or not,
+    /// saying whether that changed.
+    fn set_fixed_leaf(&mut self, index: u32, fixed: bool) -> bool {
+        let index = index as usize;
+        if index >= self.fixed_leaves.len() {
+            if !fixed {
+                return false;
+            }
+            self.fixed_leaves.resize(index + 1, false);
+        }
+        core::mem::replace(&mut self.fixed_leaves[index], fixed) != fixed
     }
 
     /// [`Self::set_aabb`] for a collider of a body the step moved (never a fixed one):
