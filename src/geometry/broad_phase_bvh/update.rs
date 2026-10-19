@@ -372,10 +372,6 @@ impl BroadPhaseBvh {
                         }
                     }
 
-                    if self.pairs.contains_key(&(handle1, handle2)) {
-                        return None;
-                    }
-
                     // Never create a pair the narrow phase's `ActiveCollisionTypes` or
                     // collision-groups filters would drop anyway (keeps big static environments
                     // and dense group-filtered scenes from flooding the contact graph); later
@@ -408,6 +404,13 @@ impl BroadPhaseBvh {
                         .collision_groups
                         .test(collider2.flags.collision_groups)
                     {
+                        return None;
+                    }
+
+                    // Probed last: most candidates are dropped by the flag tests above
+                    // (kinematic parts against the fixed world and each other), and the map
+                    // probe cost more than all of them together. The order changes no result.
+                    if self.pairs.contains_key(&(handle1, handle2)) {
                         return None;
                     }
 
