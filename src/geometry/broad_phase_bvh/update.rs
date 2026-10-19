@@ -43,6 +43,23 @@ impl BroadPhaseBvh {
     ) {
         self.frame_index = self.frame_index.overflowing_add(1).0;
 
+        // A fixed collider's leaf may change: the fixed world's queries start afresh.
+        let fixed_changed = !removed_colliders.is_empty()
+            || modified_colliders.iter().any(|handle| {
+                colliders.get(*handle).is_some_and(|co| {
+                    co.changes.intersects(
+                        ColliderChanges::PARENT
+                            | ColliderChanges::PARENT_EFFECTIVE_DOMINANCE
+                            | ColliderChanges::ENABLED_OR_DISABLED,
+                    ) || co
+                        .parent
+                        .is_none_or(|p| bodies.get(p.handle).is_none_or(|rb| rb.is_fixed()))
+                })
+            });
+        if fixed_changed {
+            self.fixed_revision = self.fixed_revision.wrapping_add(1);
+        }
+
         // If the previous update requested a deferred optimization but nothing ran it
         // (e.g. the broad-phase is driven without the physics pipeline), run it now.
         if self.deferred_optimize_pending {

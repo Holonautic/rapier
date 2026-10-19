@@ -100,6 +100,12 @@ pub struct BroadPhaseBvh {
     /// solver; consumed by [`Self::take_deferred_optimize`].
     #[cfg_attr(feature = "serde-serialize", serde(skip))]
     deferred_optimize_pending: bool,
+    /// Bumped whenever a fixed collider's leaf may have changed: a fixed collider (no
+    /// parent, or a fixed parent) modified, any collider's parent, parent type or enabled
+    /// state changed, any collider removed, any `set_aabb`. A cache of the fixed colliders'
+    /// leaves (for queries of the fixed world only) holds while it is unchanged.
+    #[cfg_attr(feature = "serde-serialize", serde(skip))]
+    fixed_revision: u64,
 }
 
 // TODO: would be interesting to try out:
@@ -228,11 +234,31 @@ impl BroadPhaseBvh {
         self.workspace = task.workspace;
     }
 
+    /// Changes whenever a fixed collider's leaf may have changed (see the field).
+    pub fn fixed_revision(&self) -> u64 {
+        self.fixed_revision
+    }
+
+    /// The tree leaf's AABB of the given collider (with its change-detection margin),
+    /// if it has one: what scene queries test it by.
+    pub fn leaf_aabb(&self, handle: ColliderHandle) -> Option<Aabb> {
+        self.tree
+            .leaf_node(handle.into_raw_parts().0)
+            .map(|node| node.aabb())
+    }
+
     /// Sets the AABB associated to the given collider.
     ///
     /// The change is immediately applied and propagated through the underlying BVH;
     /// change detection accounts for it during the next broad-phase update.
     pub fn set_aabb(&mut self, params: &IntegrationParameters, handle: ColliderHandle, aabb: Aabb) {
+        self.fixed_revision = self.fixed_revision.wrapping_add(1);
+        self.set_moved_aabb(params, handle, aabb);
+    }
+
+    /// [`Self::set_aabb`] for a collider of a body the step moved (never a fixed one):
+    /// the fixed colliders' leaves are untouched.
+    pub(crate) fn set_moved_aabb(&mut self, params: &IntegrationParameters, handle: ColliderHandle, aabb: Aabb) {
         let change_detection_skin = self.change_detection_skin(params, &aabb);
         let leaf_index = handle.into_raw_parts().0;
         // Same regime split as the `update` loop: small change volumes relocate

@@ -237,7 +237,8 @@ impl PhysicsPipeline {
         self.join_deferred_bvh_optimize(broad_phase);
 
         for (handle, aabb) in &self.end_step_collider_aabbs {
-            broad_phase.set_aabb(integration_parameters, *handle, *aabb);
+            // Only moving bodies' colliders: the fixed ones' leaves stand.
+            broad_phase.set_moved_aabb(integration_parameters, *handle, *aabb);
         }
     }
 
